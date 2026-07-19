@@ -177,7 +177,7 @@ function LogModal({ plant, onClose, onAdd, onDelete }) {
       <div style={styles.modal} onClick={(e) => e.stopPropagation()} className="scroll-thin">
         <div style={styles.modalHeader}>
           <h2 style={styles.modalTitle}>Bitácora — {plant.nombre}</h2>
-          <button type="button" style={styles.closeBtn} onClick={onClose}><X size={18} /></button>
+          <button type="button" style={styles.closeBtn} onClick={onClose} aria-label="Cerrar"><X size={18} /></button>
         </div>
 
         {(plant.fechaLlegada || plant.situacionLlegada) && (
@@ -222,7 +222,7 @@ function LogModal({ plant, onClose, onAdd, onDelete }) {
                   <div style={{ fontSize: 12, fontWeight: 600 }}>{info.label} · {fmtFecha(ev.fecha)}</div>
                   {ev.nota && <div style={{ fontSize: 12, color: "#5C4A2E" }}>{ev.nota}</div>}
                 </div>
-                <button type="button" style={styles.logDelete} onClick={() => onDelete(plant.id, ev.id)}><Trash2 size={13} /></button>
+                <button type="button" style={styles.logDelete} onClick={() => onDelete(plant.id, ev.id)} aria-label="Eliminar evento"><Trash2 size={13} /></button>
               </div>
             );
           })}
@@ -232,7 +232,7 @@ function LogModal({ plant, onClose, onAdd, onDelete }) {
   );
 }
 
-export default function PlantInventory() {
+function PlantInventory({ onLogout }) {
   const [tipos, setTipos] = useState(BASE_TIPOS);
   const [plants, setPlants] = useState([]);
   const [loaded, setLoaded] = useState(false);
@@ -241,6 +241,7 @@ export default function PlantInventory() {
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [error, setError] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
   const [identifying, setIdentifying] = useState(false);
   const [identifyError, setIdentifyError] = useState("");
   const [logPlantId, setLogPlantId] = useState(null);
@@ -313,6 +314,7 @@ export default function PlantInventory() {
     e.preventDefault();
     if (!form.nombre.trim()) return;
     const clean = { ...form };
+    const isEdit = !!clean.id;
     let next;
     if (clean.id) {
       next = plants.map((p) => (p.id === clean.id ? clean : p));
@@ -321,10 +323,21 @@ export default function PlantInventory() {
     }
     persistPlants(next);
     closeForm();
+    setSuccessMsg(isEdit ? "Planta actualizada." : "Planta agregada al vivero.");
+    setTimeout(() => setSuccessMsg(""), 3000);
   };
 
   const handleDelete = (id) => {
     persistPlants(plants.filter((p) => p.id !== id));
+    setSuccessMsg("Planta eliminada.");
+    setTimeout(() => setSuccessMsg(""), 3000);
+  };
+
+  const handleLogout = async () => {
+    try {
+      await fetch("/api/logout", { method: "POST" });
+    } catch (e) {}
+    if (onLogout) onLogout();
   };
 
   const addEvento = (plantId, evento) => {
@@ -362,14 +375,14 @@ export default function PlantInventory() {
       const prompt = `Eres un experto en botánica y jardinería en climas áridos como el de Ica, Perú (calor seco, baja humedad, suelo arenoso, lluvias muy escasas).
 Analiza la imagen de esta planta y responde SOLO con un objeto JSON válido, sin backticks ni texto adicional, con exactamente estas claves:
 {
-  "nombre_comun": "nombre popular de la planta",
-  "nombre_cientifico": "nombre científico o variedad, si lo sabes",
-  "categoria_id": "slug corto en minúsculas y sin acentos para agrupar este tipo de planta, ej: cactus, tropical, palmera, trepadora",
-  "categoria_label": "nombre de la categoría en español, ej: 'Palmeras', 'Trepadoras'",
-  "sustrato": "mezcla de sustrato recomendada específicamente para esta planta, adaptada al clima árido de Ica (máx. 2 frases)",
-  "cuidados": "cuidados clave: riego, luz, poda (máx. 2 frases)",
-  "clima_preferido": "clima natural u original de esta especie (máx. 1-2 frases)",
-  "adaptacion_ica": "qué hacer para adaptarla al clima árido de Ica si no es nativa de zonas secas; si ya es apta, dilo brevemente (máx. 2 frases)"
+"nombre_comun": "nombre popular de la planta",
+"nombre_cientifico": "nombre científico o variedad, si lo sabes",
+"categoria_id": "slug corto en minúsculas y sin acentos para agrupar este tipo de planta, ej: cactus, tropical, palmera, trepadora",
+"categoria_label": "nombre de la categoría en español, ej: 'Palmeras', 'Trepadoras'",
+"sustrato": "mezcla de sustrato recomendada específicamente para esta planta, adaptada al clima árido de Ica (máx. 2 frases)",
+"cuidados": "cuidados clave: riego, luz, poda (máx. 2 frases)",
+"clima_preferido": "clima natural u original de esta especie (máx. 1-2 frases)",
+"adaptacion_ica": "qué hacer para adaptarla al clima árido de Ica si no es nativa de zonas secas; si ya es apta, dilo brevemente (máx. 2 frases)"
 }
 Si no identificas la especie con certeza, da tu mejor estimación razonable y dilo brevemente dentro de "cuidados".`;
 
@@ -463,12 +476,12 @@ Evalúa si el clima de hoy (incluyendo posibles contrastes entre día y noche, o
 
 Responde con un objeto JSON válido (puedes explicar tu búsqueda antes si quieres, pero el JSON debe aparecer completo y una sola vez, al final), con este formato exacto:
 {
-  "resumen_clima": "resumen breve del clima de hoy en Ica (máx 2 frases)",
-  "estacion": "estación actual en Ica, ej: invierno",
-  "alerta_general": "frase breve si hay algo climático notable hoy (contrastes, calor, frío, humedad); cadena vacía si no hay nada relevante",
-  "plantas_en_riesgo": [
-    {"id": "el id exacto de la planta tal como aparece en la lista", "nombre": "nombre de la planta", "riesgo": "qué le puede afectar hoy (máx 1-2 frases)", "sugerencia": "qué hacer para protegerla (máx 1-2 frases)"}
-  ]
+"resumen_clima": "resumen breve del clima de hoy en Ica (máx 2 frases)",
+"estacion": "estación actual en Ica, ej: invierno",
+"alerta_general": "frase breve si hay algo climático notable hoy (contrastes, calor, frío, humedad); cadena vacía si no hay nada relevante",
+"plantas_en_riesgo": [
+{"id": "el id exacto de la planta tal como aparece en la lista", "nombre": "nombre de la planta", "riesgo": "qué le puede afectar hoy (máx 1-2 frases)", "sugerencia": "qué hacer para protegerla (máx 1-2 frases)"}
+]
 }
 Si ninguna planta corre riesgo hoy, usa "plantas_en_riesgo": [].`;
 
@@ -553,9 +566,12 @@ Si ninguna planta corre riesgo hoy, usa "plantas_en_riesgo": [].`;
               y revisa si el clima de hoy le puede hacer daño.
             </p>
           </div>
-          <div style={styles.statBox}>
-            <span style={styles.statNum}>{plants.length}</span>
-            <span style={styles.statLabel}>{plants.length === 1 ? "planta" : "plantas"}</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <div style={styles.statBox}>
+              <span style={styles.statNum}>{plants.length}</span>
+              <span style={styles.statLabel}>{plants.length === 1 ? "planta" : "plantas"}</span>
+            </div>
+            <button type="button" style={styles.logoutBtn} onClick={handleLogout}>Cerrar sesión</button>
           </div>
         </div>
 
@@ -665,6 +681,7 @@ Si ninguna planta corre riesgo hoy, usa "plantas_en_riesgo": [].`;
 
       {identifyError && <div style={styles.errorBanner}>{identifyError}</div>}
       {error && <div style={styles.errorBanner}>{error}</div>}
+      {successMsg && <div style={styles.successBanner}>{successMsg}</div>}
 
       {/* Estado vacío global */}
       {loaded && plants.length === 0 && (
@@ -747,9 +764,9 @@ Si ninguna planta corre riesgo hoy, usa "plantas_en_riesgo": [].`;
                           )}
                         </div>
                         <div style={styles.cardActions}>
-                          <button style={styles.iconBtn} className="icon-btn" onClick={() => setLogPlantId(p.id)}><ClipboardList size={14} /></button>
-                          <button style={styles.iconBtn} className="icon-btn" onClick={() => openEdit(p)}><Pencil size={14} /></button>
-                          <button style={styles.iconBtn} className="icon-btn" onClick={() => handleDelete(p.id)}><Trash2 size={14} /></button>
+                          <button style={styles.iconBtn} className="icon-btn" onClick={() => setLogPlantId(p.id)} aria-label="Ver bitácora"><ClipboardList size={14} /></button>
+                          <button style={styles.iconBtn} className="icon-btn" onClick={() => openEdit(p)} aria-label="Editar planta"><Pencil size={14} /></button>
+                          <button style={styles.iconBtn} className="icon-btn" onClick={() => handleDelete(p.id)} aria-label="Eliminar planta"><Trash2 size={14} /></button>
                         </div>
                       </div>
                     );
@@ -767,7 +784,7 @@ Si ninguna planta corre riesgo hoy, usa "plantas_en_riesgo": [].`;
           <form style={styles.modal} onClick={(e) => e.stopPropagation()} onSubmit={handleSave} className="scroll-thin">
             <div style={styles.modalHeader}>
               <h2 style={styles.modalTitle}>{form.id ? "Editar planta" : "Nueva planta"}</h2>
-              <button type="button" style={styles.closeBtn} onClick={closeForm}><X size={18} /></button>
+              <button type="button" style={styles.closeBtn} onClick={closeForm} aria-label="Cerrar"><X size={18} /></button>
             </div>
             {form.aiIdentified && (
               <div style={styles.aiBanner}><Sparkles size={13} /> Identificado con IA — revisa y ajusta antes de guardar.</div>
@@ -841,6 +858,82 @@ Si ninguna planta corre riesgo hoy, usa "plantas_en_riesgo": [].`;
   );
 }
 
+function LoginScreen({ onSuccess }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [loggingIn, setLoggingIn] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setLoginError("");
+    setLoggingIn(true);
+    try {
+      const res = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+      if (res.ok) {
+        onSuccess();
+      } else {
+        setLoginError("Usuario o clave incorrectos.");
+      }
+    } catch (err) {
+      setLoginError("No se pudo conectar. Intenta de nuevo.");
+    } finally {
+      setLoggingIn(false);
+    }
+  };
+
+  return (
+    <div style={styles.loginPage}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600&family=Work+Sans:wght@400;500;600&display=swap');
+        * { box-sizing: border-box; }
+        body { margin: 0; }
+        input { font-family: 'Work Sans', sans-serif; }
+      `}</style>
+      <form style={styles.loginCard} onSubmit={submit}>
+        <div style={styles.loginEyebrow}>Ica, Perú — clima árido</div>
+        <h1 style={styles.loginTitle}>Vivero</h1>
+        <p style={styles.loginSub}>Ingresa tu usuario y clave para ver el inventario.</p>
+        <label style={styles.label}>Usuario</label>
+        <input style={styles.input} value={username} onChange={(e) => setUsername(e.target.value)} autoFocus required />
+        <label style={styles.label}>Clave</label>
+        <input style={styles.input} type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+        {loginError && <div style={{ ...styles.errorBanner, margin: "14px 0 0", maxWidth: "none" }}>{loginError}</div>}
+        <button type="submit" style={{ ...styles.saveBtn, marginTop: 16, width: "100%" }} disabled={loggingIn}>
+          {loggingIn ? "Ingresando…" : "Ingresar"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+export default function App() {
+  const [authChecked, setAuthChecked] = useState(false);
+  const [authOk, setAuthOk] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/session")
+      .then((res) => res.json())
+      .then((data) => setAuthOk(!!data.ok))
+      .catch(() => setAuthOk(false))
+      .finally(() => setAuthChecked(true));
+  }, []);
+
+  if (!authChecked) {
+    return <div style={styles.loginPage} />;
+  }
+
+  if (!authOk) {
+    return <LoginScreen onSuccess={() => setAuthOk(true)} />;
+  }
+
+  return <PlantInventory onLogout={() => setAuthOk(false)} />;
+}
+
 const styles = {
   page: { minHeight: "100vh", background: "#F1E9D2", color: "#211C14", fontFamily: "'Work Sans', sans-serif", padding: "28px 20px 60px" },
   header: { maxWidth: 980, margin: "0 auto 24px" },
@@ -876,6 +969,8 @@ const styles = {
   addBtnGhostSmall: { display: "flex", alignItems: "center", gap: 6, background: "transparent", color: "#211C14", border: "1px solid #D8C9A0", borderRadius: 8, padding: "10px 14px", fontSize: 14, fontWeight: 600 },
   addBtnGhost: { display: "flex", alignItems: "center", gap: 6, background: "#211C14", color: "#F1E9D2", border: "none", borderRadius: 8, padding: "10px 16px", fontSize: 14, fontWeight: 600 },
   errorBanner: { maxWidth: 980, margin: "0 auto 16px", background: "#F3D8C8", color: "#6B2E12", padding: "10px 14px", borderRadius: 8, fontSize: 13.5 },
+  successBanner: { maxWidth: 980, margin: "0 auto 16px", background: "#DCEAD8", color: "#2F5233", padding: "10px 14px", borderRadius: 8, fontSize: 13.5 },
+  logoutBtn: { background: "transparent", border: "1px solid #D8C9A0", borderRadius: 8, padding: "8px 14px", fontSize: 12.5, color: "#211C14", fontWeight: 600, whiteSpace: "nowrap" },
   empty: { maxWidth: 980, margin: "40px auto", textAlign: "center", padding: "40px 20px", border: "1px dashed #D8C9A0", borderRadius: 12 },
   emptyTitle: { fontFamily: "'Fraunces', serif", fontSize: 20, fontWeight: 600, margin: "12px 0 4px" },
   emptyText: { fontSize: 13.5, color: "#6B4F2A", margin: 0 },
@@ -921,4 +1016,9 @@ const styles = {
   logList: { display: "flex", flexDirection: "column", gap: 8, marginTop: 16 },
   logItem: { display: "flex", gap: 8, background: "#fff", border: "1px solid #E4DAC0", borderRadius: 8, padding: "8px 10px", alignItems: "flex-start" },
   logDelete: { background: "transparent", border: "none", color: "#8A7857", padding: 4 },
+  loginPage: { minHeight: "100vh", background: "#F1E9D2", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 },
+  loginCard: { background: "#fff", border: "1px solid #D8C9A0", borderRadius: 14, padding: 28, width: "100%", maxWidth: 360, fontFamily: "'Work Sans', sans-serif" },
+  loginEyebrow: { fontFamily: "'Space Mono', monospace", fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: "#A85C32", marginBottom: 6 },
+  loginTitle: { fontFamily: "'Fraunces', serif", fontWeight: 600, fontSize: 34, margin: 0, color: "#211C14" },
+  loginSub: { fontSize: 13.5, color: "#6B4F2A", marginTop: 8, marginBottom: 4 },
 };
