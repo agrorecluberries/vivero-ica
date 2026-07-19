@@ -1,0 +1,924 @@
+import React, { useState, useEffect, useRef } from "react";
+import {
+  Search, Plus, X, Pencil, Trash2, Leaf, Sprout, MapPin, Sun,
+  Camera, Loader2, Sparkles, Droplet, Compass, ClipboardList,
+  Home, Bug, Scissors, Layers, Droplets, FileText, Clock,
+  CloudSun, RefreshCw, AlertTriangle,
+} from "lucide-react";
+import { storage } from "./storage.js";
+
+// ---- Categorías base, con sustrato pensado para el clima árido de Ica ----
+const BASE_TIPOS = [
+  {
+    id: "cactus",
+    label: "Cactus y suculentas",
+    color: "#A85C32",
+    sustrato: "60% arena gruesa, 25% tierra de hoja, 15% grava fina — drenaje máximo, pensado para el calor seco de Ica.",
+    estratos: [60, 25, 15],
+  },
+  {
+    id: "tropical",
+    label: "Tropicales",
+    color: "#2F5233",
+    sustrato: "40% tierra negra, 30% fibra de coco o turba, 20% compost, 10% perlita — retiene humedad extra frente al ambiente seco.",
+    estratos: [40, 30, 20, 10],
+  },
+  {
+    id: "frutal",
+    label: "Frutales",
+    color: "#6B4F2A",
+    sustrato: "50% tierra de chacra, 30% compost, 20% arena — cubrir con mulch para conservar humedad del suelo.",
+    estratos: [50, 30, 20],
+  },
+  {
+    id: "aromatica",
+    label: "Aromáticas y hierbas",
+    color: "#5C7A4A",
+    sustrato: "50% tierra de hoja, 30% arena, 20% compost — buen drenaje, riego moderado y frecuente.",
+    estratos: [50, 30, 20],
+  },
+  {
+    id: "ornamental",
+    label: "Ornamentales de interior",
+    color: "#8FB79B",
+    sustrato: "40% tierra negra, 30% compost, 20% perlita, 10% arena.",
+    estratos: [40, 30, 20, 10],
+  },
+  {
+    id: "otra",
+    label: "Otras",
+    color: "#9C8B6E",
+    sustrato: "Sustrato balanceado con buen drenaje; ajustar según la especie.",
+    estratos: [50, 50],
+  },
+];
+const BASE_IDS = BASE_TIPOS.map((t) => t.id);
+const EXTRA_COLORS = ["#7A5C3E", "#4A6B5C", "#8B5E83", "#5C6B8A", "#9B7653", "#3E6B5A", "#8A5C6B"];
+
+const EVENT_TYPES = [
+  { id: "llegada", label: "Llegada", icon: Home },
+  { id: "plaga", label: "Plaga", icon: Bug },
+  { id: "poda", label: "Poda", icon: Scissors },
+  { id: "sustrato", label: "Cambio de sustrato", icon: Layers },
+  { id: "fumigacion", label: "Fumigación / Abono", icon: Droplets },
+  { id: "otro", label: "Otro", icon: FileText },
+];
+const eventInfo = (id) => EVENT_TYPES.find((e) => e.id === id) || EVENT_TYPES[EVENT_TYPES.length - 1];
+
+const PLANTS_KEY = "ica-plant-inventory";
+const TIPOS_KEY = "ica-plant-tipos";
+const CLIMATE_KEY = "ica-plant-climate";
+
+const emptyForm = {
+  id: null,
+  nombre: "",
+  variedad: "",
+  tipo: "cactus",
+  sustrato: BASE_TIPOS[0].sustrato,
+  cuidados: "",
+  climaPreferido: "",
+  adaptacion: "",
+  ubicacion: "",
+  imagen: "",
+  notas: "",
+  fechaLlegada: "",
+  situacionLlegada: "",
+  eventos: [],
+  aiIdentified: false,
+};
+
+function slugify(s) {
+  return (s || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+}
+
+function pickColor(existingTipos) {
+  const used = new Set(existingTipos.map((t) => t.color));
+  const avail = EXTRA_COLORS.find((c) => !used.has(c));
+  return avail || EXTRA_COLORS[existingTipos.length % EXTRA_COLORS.length];
+}
+
+function tipoInfo(tipos, id) {
+  return tipos.find((t) => t.id === id) || tipos[tipos.length - 1] || BASE_TIPOS[BASE_TIPOS.length - 1];
+}
+
+function lastEvento(p) {
+  if (!p.eventos || !p.eventos.length) return null;
+  return [...p.eventos].sort((a, b) => (b.fecha || "").localeCompare(a.fecha || ""))[0];
+}
+
+function fmtFecha(iso) {
+  if (!iso) return "";
+  try {
+    return new Date(iso + "T00:00:00").toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric" });
+  } catch (e) {
+    return iso;
+  }
+}
+
+function fileToCompressedDataUrl(file, maxDim = 640, quality = 0.72) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > height && width > maxDim) {
+          height = Math.round((height * maxDim) / width);
+          width = maxDim;
+        } else if (height >= width && height > maxDim) {
+          width = Math.round((width * maxDim) / height);
+          height = maxDim;
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.onerror = reject;
+      img.src = reader.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function StrataBar({ estratos, colorBase, height = 10 }) {
+  return (
+    <div style={{ display: "flex", width: "100%", height, borderRadius: 3, overflow: "hidden" }}>
+      {estratos.map((pct, i) => (
+        <div key={i} style={{ width: `${pct}%`, background: colorBase, opacity: 1 - i * 0.22 }} />
+      ))}
+    </div>
+  );
+}
+
+function LogModal({ plant, onClose, onAdd, onDelete }) {
+  const [fecha, setFecha] = useState(new Date().toISOString().slice(0, 10));
+  const [tipo, setTipo] = useState("plaga");
+  const [nota, setNota] = useState("");
+  const eventos = [...(plant.eventos || [])].sort((a, b) => (b.fecha || "").localeCompare(a.fecha || ""));
+
+  const submit = (e) => {
+    e.preventDefault();
+    if (!fecha) return;
+    onAdd(plant.id, { fecha, tipo, nota });
+    setNota("");
+  };
+
+  return (
+    <div style={styles.overlay} onClick={onClose}>
+      <div style={styles.modal} onClick={(e) => e.stopPropagation()} className="scroll-thin">
+        <div style={styles.modalHeader}>
+          <h2 style={styles.modalTitle}>Bitácora — {plant.nombre}</h2>
+          <button type="button" style={styles.closeBtn} onClick={onClose}><X size={18} /></button>
+        </div>
+
+        {(plant.fechaLlegada || plant.situacionLlegada) && (
+          <div style={styles.arrivalBox}>
+            <Home size={13} color="#6B4F2A" />
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 12.5 }}>
+                {plant.fechaLlegada ? `Llegó el ${fmtFecha(plant.fechaLlegada)}` : "Llegada registrada"}
+              </div>
+              {plant.situacionLlegada && <div style={{ fontSize: 12, color: "#5C4A2E" }}>{plant.situacionLlegada}</div>}
+            </div>
+          </div>
+        )}
+
+        <form onSubmit={submit} style={styles.logForm}>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input type="date" style={{ ...styles.input, flex: 1 }} value={fecha} onChange={(e) => setFecha(e.target.value)} required />
+            <select style={{ ...styles.input, flex: 1 }} value={tipo} onChange={(e) => setTipo(e.target.value)}>
+              {EVENT_TYPES.filter((t) => t.id !== "llegada").map((t) => (
+                <option key={t.id} value={t.id}>{t.label}</option>
+              ))}
+            </select>
+          </div>
+          <input
+            style={{ ...styles.input, marginTop: 8 }}
+            placeholder="Detalle (ej. pulgón en hojas nuevas, se abonó con humus…)"
+            value={nota}
+            onChange={(e) => setNota(e.target.value)}
+          />
+          <button type="submit" style={{ ...styles.saveBtn, marginTop: 10 }}>Agregar al historial</button>
+        </form>
+
+        <div style={styles.logList}>
+          {eventos.length === 0 && <p style={styles.emptyText}>Todavía no hay eventos registrados.</p>}
+          {eventos.map((ev) => {
+            const info = eventInfo(ev.tipo);
+            const Icon = info.icon;
+            return (
+              <div key={ev.id} style={styles.logItem}>
+                <Icon size={14} color="#6B4F2A" style={{ marginTop: 2, flexShrink: 0 }} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600 }}>{info.label} · {fmtFecha(ev.fecha)}</div>
+                  {ev.nota && <div style={{ fontSize: 12, color: "#5C4A2E" }}>{ev.nota}</div>}
+                </div>
+                <button type="button" style={styles.logDelete} onClick={() => onDelete(plant.id, ev.id)}><Trash2 size={13} /></button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function PlantInventory() {
+  const [tipos, setTipos] = useState(BASE_TIPOS);
+  const [plants, setPlants] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [query, setQuery] = useState("");
+  const [filterTipo, setFilterTipo] = useState("todos");
+  const [formOpen, setFormOpen] = useState(false);
+  const [form, setForm] = useState(emptyForm);
+  const [error, setError] = useState("");
+  const [identifying, setIdentifying] = useState(false);
+  const [identifyError, setIdentifyError] = useState("");
+  const [logPlantId, setLogPlantId] = useState(null);
+  const [climate, setClimate] = useState(null);
+  const [climateLoading, setClimateLoading] = useState(false);
+  const [climateError, setClimateError] = useState("");
+  const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const resPlants = await storage.get(PLANTS_KEY);
+        if (resPlants && resPlants.value) setPlants(JSON.parse(resPlants.value));
+      } catch (e) {}
+      try {
+        const resTipos = await storage.get(TIPOS_KEY);
+        if (resTipos && resTipos.value) setTipos(JSON.parse(resTipos.value));
+      } catch (e) {}
+      try {
+        const resClimate = await storage.get(CLIMATE_KEY);
+        if (resClimate && resClimate.value) setClimate(JSON.parse(resClimate.value));
+      } catch (e) {}
+      setLoaded(true);
+    })();
+  }, []);
+
+  const persistPlants = async (next) => {
+    setPlants(next);
+    try {
+      await storage.set(PLANTS_KEY, JSON.stringify(next));
+    } catch (e) {
+      setError("No se pudo guardar el cambio. Intenta de nuevo.");
+    }
+  };
+
+  const persistTipos = async (next) => {
+    setTipos(next);
+    try {
+      await storage.set(TIPOS_KEY, JSON.stringify(next));
+    } catch (e) {
+      setError("No se pudo guardar la nueva área. Intenta de nuevo.");
+    }
+  };
+
+  const openNew = () => {
+    setForm({ ...emptyForm, tipo: tipos[0]?.id || "otra", sustrato: tipos[0]?.sustrato || "" });
+    setFormOpen(true);
+  };
+
+  const openEdit = (plant) => {
+    setForm({ ...emptyForm, ...plant });
+    setFormOpen(true);
+  };
+
+  const closeForm = () => {
+    setFormOpen(false);
+    setForm(emptyForm);
+  };
+
+  const handleTipoChange = (tipoId) => {
+    const info = tipoInfo(tipos, tipoId);
+    setForm((f) => ({
+      ...f,
+      tipo: tipoId,
+      sustrato: f.id || f.aiIdentified ? f.sustrato : info.sustrato,
+    }));
+  };
+
+  const handleSave = (e) => {
+    e.preventDefault();
+    if (!form.nombre.trim()) return;
+    const clean = { ...form };
+    let next;
+    if (clean.id) {
+      next = plants.map((p) => (p.id === clean.id ? clean : p));
+    } else {
+      next = [...plants, { ...clean, id: Date.now().toString() }];
+    }
+    persistPlants(next);
+    closeForm();
+  };
+
+  const handleDelete = (id) => {
+    persistPlants(plants.filter((p) => p.id !== id));
+  };
+
+  const addEvento = (plantId, evento) => {
+    const next = plants.map((p) =>
+      p.id === plantId ? { ...p, eventos: [...(p.eventos || []), { ...evento, id: Date.now().toString() }] } : p
+    );
+    persistPlants(next);
+  };
+
+  const deleteEvento = (plantId, eventoId) => {
+    const next = plants.map((p) =>
+      p.id === plantId ? { ...p, eventos: (p.eventos || []).filter((ev) => ev.id !== eventoId) } : p
+    );
+    persistPlants(next);
+  };
+
+  const triggerUpload = () => {
+    setIdentifyError("");
+    fileInputRef.current?.click();
+  };
+
+  const handleImageSelected = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    setIdentifyError("");
+    setIdentifying(true);
+    try {
+      const compressed = await fileToCompressedDataUrl(file, 640, 0.72);
+      const match = compressed.match(/^data:(.*);base64,(.*)$/);
+      if (!match) throw new Error("bad image");
+      const mediaType = match[1];
+      const b64 = match[2];
+
+      const prompt = `Eres un experto en botánica y jardinería en climas áridos como el de Ica, Perú (calor seco, baja humedad, suelo arenoso, lluvias muy escasas).
+Analiza la imagen de esta planta y responde SOLO con un objeto JSON válido, sin backticks ni texto adicional, con exactamente estas claves:
+{
+  "nombre_comun": "nombre popular de la planta",
+  "nombre_cientifico": "nombre científico o variedad, si lo sabes",
+  "categoria_id": "slug corto en minúsculas y sin acentos para agrupar este tipo de planta, ej: cactus, tropical, palmera, trepadora",
+  "categoria_label": "nombre de la categoría en español, ej: 'Palmeras', 'Trepadoras'",
+  "sustrato": "mezcla de sustrato recomendada específicamente para esta planta, adaptada al clima árido de Ica (máx. 2 frases)",
+  "cuidados": "cuidados clave: riego, luz, poda (máx. 2 frases)",
+  "clima_preferido": "clima natural u original de esta especie (máx. 1-2 frases)",
+  "adaptacion_ica": "qué hacer para adaptarla al clima árido de Ica si no es nativa de zonas secas; si ya es apta, dilo brevemente (máx. 2 frases)"
+}
+Si no identificas la especie con certeza, da tu mejor estimación razonable y dilo brevemente dentro de "cuidados".`;
+
+      const response = await fetch("/api/claude", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 1000,
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "image", source: { type: "base64", media_type: mediaType, data: b64 } },
+                { type: "text", text: prompt },
+              ],
+            },
+          ],
+        }),
+      });
+      const data = await response.json();
+      const text = (data.content || []).map((b) => b.text || "").join("\n");
+      const cleanText = text.replace(/```json|```/g, "").trim();
+      const result = JSON.parse(cleanText);
+
+      const catIdRaw = slugify(result.categoria_id || result.categoria_label || "otra");
+      const existingMatch = tipos.find(
+        (t) => t.id === catIdRaw || slugify(t.label) === slugify(result.categoria_label || "")
+      );
+
+      let tipoId;
+      if (existingMatch) {
+        tipoId = existingMatch.id;
+      } else {
+        const newTipo = {
+          id: catIdRaw || "cat-" + Date.now(),
+          label: result.categoria_label || "Nueva área",
+          color: pickColor(tipos),
+          sustrato: result.sustrato || "",
+          estratos: [50, 30, 20],
+        };
+        await persistTipos([...tipos, newTipo]);
+        tipoId = newTipo.id;
+      }
+
+      setForm({
+        ...emptyForm,
+        nombre: result.nombre_comun || "",
+        variedad: result.nombre_cientifico || "",
+        tipo: tipoId,
+        sustrato: result.sustrato || "",
+        cuidados: result.cuidados || "",
+        climaPreferido: result.clima_preferido || "",
+        adaptacion: result.adaptacion_ica || "",
+        imagen: compressed,
+        aiIdentified: true,
+      });
+      setFormOpen(true);
+    } catch (err) {
+      setIdentifyError("No se pudo identificar la planta automáticamente. Puedes completarla a mano.");
+    } finally {
+      setIdentifying(false);
+    }
+  };
+
+  const checkClimate = async () => {
+    if (plants.length === 0) {
+      setClimateError("Agrega al menos una planta para poder evaluar el clima de hoy.");
+      return;
+    }
+    setClimateError("");
+    setClimateLoading(true);
+    try {
+      const todayStr = new Date().toLocaleDateString("es-PE", {
+        weekday: "long", year: "numeric", month: "long", day: "numeric",
+      });
+      const listStr = plants
+        .map((p) => {
+          const t = tipoInfo(tipos, p.tipo);
+          return `id:${p.id} — ${p.nombre}${p.variedad ? " (" + p.variedad + ")" : ""} — área: ${t.label}${p.climaPreferido ? " — clima natural: " + p.climaPreferido : ""}`;
+        })
+        .join("\n");
+
+      const prompt = `Hoy es ${todayStr}. Ubicación: Ica, Perú (costa desértica del hemisferio sur).
+Busca en internet el pronóstico del clima de hoy para Ica, Perú: temperatura máxima, mínima y humedad aproximada. Determina también la estación del año actual en el hemisferio sur.
+
+Luego revisa esta lista de plantas de un vivero doméstico:
+${listStr}
+
+Evalúa si el clima de hoy (incluyendo posibles contrastes entre día y noche, o entre la estación esperada y el clima real, por ejemplo frío o calor fuera de lo normal para la temporada) puede afectar a alguna de estas plantas, y qué debería hacer la persona para protegerlas.
+
+Responde con un objeto JSON válido (puedes explicar tu búsqueda antes si quieres, pero el JSON debe aparecer completo y una sola vez, al final), con este formato exacto:
+{
+  "resumen_clima": "resumen breve del clima de hoy en Ica (máx 2 frases)",
+  "estacion": "estación actual en Ica, ej: invierno",
+  "alerta_general": "frase breve si hay algo climático notable hoy (contrastes, calor, frío, humedad); cadena vacía si no hay nada relevante",
+  "plantas_en_riesgo": [
+    {"id": "el id exacto de la planta tal como aparece en la lista", "nombre": "nombre de la planta", "riesgo": "qué le puede afectar hoy (máx 1-2 frases)", "sugerencia": "qué hacer para protegerla (máx 1-2 frases)"}
+  ]
+}
+Si ninguna planta corre riesgo hoy, usa "plantas_en_riesgo": [].`;
+
+      const response = await fetch("/api/claude", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 1000,
+          messages: [{ role: "user", content: prompt }],
+          tools: [{ type: "web_search_20250305", name: "web_search" }],
+        }),
+      });
+      const data = await response.json();
+      const text = (data.content || []).map((b) => b.text || "").join("\n");
+      const firstBrace = text.indexOf("{");
+      const lastBrace = text.lastIndexOf("}");
+      if (firstBrace === -1 || lastBrace === -1) throw new Error("sin JSON");
+      const result = JSON.parse(text.slice(firstBrace, lastBrace + 1));
+      const climateObj = { ...result, checkedAt: new Date().toISOString() };
+      setClimate(climateObj);
+      try {
+        await storage.set(CLIMATE_KEY, JSON.stringify(climateObj));
+      } catch (e) {}
+    } catch (err) {
+      setClimateError("No se pudo consultar el clima ahora. Intenta de nuevo en un momento.");
+    } finally {
+      setClimateLoading(false);
+    }
+  };
+
+  const filtered = plants.filter((p) => {
+    const q = query.toLowerCase();
+    const matchesQuery = p.nombre.toLowerCase().includes(q) || (p.variedad || "").toLowerCase().includes(q);
+    const matchesTipo = filterTipo === "todos" || p.tipo === filterTipo;
+    return matchesQuery && matchesTipo;
+  });
+
+  const visibleTipos = tipos.filter((t) => {
+    if (filterTipo !== "todos" && t.id !== filterTipo) return false;
+    const count = filtered.filter((p) => p.tipo === t.id).length;
+    return count > 0 || BASE_IDS.includes(t.id);
+  });
+
+  const riskById = {};
+  (climate?.plantas_en_riesgo || []).forEach((a) => {
+    if (a.id) riskById[a.id] = a;
+  });
+
+  const logPlant = logPlantId ? plants.find((p) => p.id === logPlantId) : null;
+
+  return (
+    <div style={styles.page}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;1,9..144,500&family=Work+Sans:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap');
+        * { box-sizing: border-box; }
+        body { margin: 0; }
+        input, textarea, select { font-family: 'Work Sans', sans-serif; }
+        ::placeholder { color: #9C8B6E; }
+        .plant-card { transition: transform 0.18s ease, box-shadow 0.18s ease; }
+        .plant-card:hover { transform: translateY(-3px); box-shadow: 0 10px 24px rgba(33,28,20,0.14); }
+        .icon-btn { transition: background 0.15s ease, color 0.15s ease; }
+        .icon-btn:hover { background: #211C14; color: #F1E9D2; }
+        button { font-family: 'Work Sans', sans-serif; cursor: pointer; }
+        .scroll-thin::-webkit-scrollbar { width: 6px; }
+        .scroll-thin::-webkit-scrollbar-thumb { background: #D8C9A0; border-radius: 3px; }
+        .spin { animation: spin 1s linear infinite; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      `}</style>
+
+      {/* Header */}
+      <header style={styles.header}>
+        <div style={styles.headerTop}>
+          <div>
+            <div style={styles.eyebrow}>
+              <MapPin size={13} strokeWidth={2.5} />
+              Ica, Perú — clima árido
+            </div>
+            <h1 style={styles.h1}>Vivero</h1>
+            <p style={styles.sub}>
+              Sube una foto para identificar cada planta, lleva su historial de cuidados
+              y revisa si el clima de hoy le puede hacer daño.
+            </p>
+          </div>
+          <div style={styles.statBox}>
+            <span style={styles.statNum}>{plants.length}</span>
+            <span style={styles.statLabel}>{plants.length === 1 ? "planta" : "plantas"}</span>
+          </div>
+        </div>
+
+        {/* Perfil de suelo */}
+        <div style={styles.soilProfile}>
+          <div style={styles.soilProfileLabel}>
+            <Sun size={13} strokeWidth={2.5} />
+            Perfil de sustrato por área — se amplía cuando identificas plantas nuevas
+          </div>
+          <div style={styles.soilRows}>
+            {tipos.map((t) => (
+              <div key={t.id} style={styles.soilRow}>
+                <span style={styles.soilRowLabel}>{t.label}</span>
+                <StrataBar estratos={t.estratos} colorBase={t.color} />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Clima y alertas del día */}
+        <div style={styles.climatePanel}>
+          <div style={styles.climateHeaderRow}>
+            <div style={styles.soilProfileLabel}>
+              <CloudSun size={14} strokeWidth={2.5} />
+              Clima y alertas de hoy
+            </div>
+            <button style={styles.refreshBtn} onClick={checkClimate} disabled={climateLoading}>
+              {climateLoading ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
+              {climate ? "Actualizar" : "Consultar clima de hoy"}
+            </button>
+          </div>
+
+          {climateError && <p style={styles.climateError}>{climateError}</p>}
+
+          {!climate && !climateLoading && !climateError && (
+            <p style={styles.climateEmpty}>
+              Consulta el clima real de hoy en Ica y revisa qué plantas de tu inventario podrían
+              verse afectadas por contrastes de temperatura o humedad fuera de temporada.
+            </p>
+          )}
+
+          {climateLoading && <p style={styles.climateEmpty}>Buscando el clima de hoy y revisando tus plantas…</p>}
+
+          {climate && !climateLoading && (
+            <div>
+              <div style={styles.climateSummaryRow}>
+                <span style={styles.seasonBadge}>{climate.estacion || "estación"}</span>
+                <p style={styles.climateSummaryText}>{climate.resumen_clima}</p>
+              </div>
+              {climate.alerta_general && (
+                <div style={styles.climateAlertGeneral}>
+                  <AlertTriangle size={13} color="#8A3B1D" />
+                  <span>{climate.alerta_general}</span>
+                </div>
+              )}
+              {(climate.plantas_en_riesgo || []).length > 0 ? (
+                <div style={styles.riskList}>
+                  {climate.plantas_en_riesgo.map((r, i) => (
+                    <div key={i} style={styles.riskItem}>
+                      <div style={{ fontWeight: 600, fontSize: 12.5 }}>{r.nombre}</div>
+                      <div style={{ fontSize: 12, color: "#5C4A2E" }}>{r.riesgo}</div>
+                      <div style={{ fontSize: 12, color: "#3C3120", marginTop: 3 }}><strong>Qué hacer:</strong> {r.sugerencia}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p style={styles.climateEmpty}>Ninguna de tus plantas parece estar en riesgo hoy.</p>
+              )}
+              <p style={styles.climateChecked}>Actualizado: {new Date(climate.checkedAt).toLocaleString("es-PE", { dateStyle: "medium", timeStyle: "short" })}</p>
+            </div>
+          )}
+        </div>
+      </header>
+
+      {/* Toolbar */}
+      <div style={styles.toolbar}>
+        <div style={styles.searchWrap}>
+          <Search size={16} color="#6B4F2A" />
+          <input
+            style={styles.searchInput}
+            placeholder="Buscar por nombre o variedad…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
+        <select style={styles.select} value={filterTipo} onChange={(e) => setFilterTipo(e.target.value)}>
+          <option value="todos">Todas las áreas</option>
+          {tipos.map((t) => (
+            <option key={t.id} value={t.id}>{t.label}</option>
+          ))}
+        </select>
+        <button style={styles.addBtn} onClick={triggerUpload} disabled={identifying}>
+          {identifying ? <Loader2 size={16} className="spin" /> : <Camera size={16} />}
+          {identifying ? "Identificando…" : "Subir foto"}
+        </button>
+        <button style={styles.addBtnGhostSmall} onClick={openNew}>
+          <Plus size={16} /> Manual
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          style={{ display: "none" }}
+          onChange={handleImageSelected}
+        />
+      </div>
+
+      {identifyError && <div style={styles.errorBanner}>{identifyError}</div>}
+      {error && <div style={styles.errorBanner}>{error}</div>}
+
+      {/* Estado vacío global */}
+      {loaded && plants.length === 0 && (
+        <div style={styles.empty}>
+          <Sprout size={30} color="#A85C32" strokeWidth={1.5} />
+          <p style={styles.emptyTitle}>Tu vivero está vacío</p>
+          <p style={styles.emptyText}>Sube una foto para identificar tu primera planta, o agrégala a mano.</p>
+          <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 14 }}>
+            <button style={styles.addBtn} onClick={triggerUpload}><Camera size={16} /> Subir foto</button>
+            <button style={styles.addBtnGhost} onClick={openNew}><Plus size={16} /> Manual</button>
+          </div>
+        </div>
+      )}
+
+      {/* Sin resultados */}
+      {loaded && plants.length > 0 && filtered.length === 0 && (
+        <div style={styles.empty}>
+          <Sprout size={30} color="#A85C32" strokeWidth={1.5} />
+          <p style={styles.emptyTitle}>Sin resultados</p>
+          <p style={styles.emptyText}>Prueba con otro nombre o quita el filtro de área.</p>
+        </div>
+      )}
+
+      {/* Áreas */}
+      <div style={styles.areas}>
+        {loaded && plants.length > 0 && visibleTipos.map((t) => {
+          const tipoPlants = filtered.filter((p) => p.tipo === t.id);
+          if (filterTipo === "todos" && tipoPlants.length === 0 && !BASE_IDS.includes(t.id)) return null;
+          return (
+            <section key={t.id} style={styles.area}>
+              <div style={styles.areaHeader}>
+                <span style={{ ...styles.areaDot, background: t.color }} />
+                <h2 style={styles.areaTitle}>{t.label}</h2>
+                <span style={styles.areaCount}>{tipoPlants.length}</span>
+              </div>
+              {tipoPlants.length === 0 ? (
+                <p style={styles.areaEmpty}>Aún no agregaste plantas en esta área.</p>
+              ) : (
+                <div style={styles.grid}>
+                  {tipoPlants.map((p) => {
+                    const info = tipoInfo(tipos, p.tipo);
+                    const risk = riskById[p.id];
+                    const ult = lastEvento(p);
+                    return (
+                      <div key={p.id} style={{ ...styles.card, ...(risk ? styles.cardAtRisk : {}) }} className="plant-card">
+                        <div style={styles.cardImageWrap}>
+                          {p.imagen ? (
+                            <img src={p.imagen} alt={p.nombre} style={styles.cardImage} />
+                          ) : (
+                            <div style={{ ...styles.cardImagePlaceholder, background: info.color + "22" }}>
+                              <Leaf size={26} color={info.color} strokeWidth={1.5} />
+                            </div>
+                          )}
+                          {p.aiIdentified && <span style={styles.aiTag}><Sparkles size={11} /> IA</span>}
+                          {risk && <span style={styles.riskTag}><AlertTriangle size={11} /> Riesgo hoy</span>}
+                        </div>
+                        <div style={styles.cardBody}>
+                          <h3 style={styles.cardName}>{p.nombre}</h3>
+                          {p.variedad && <p style={styles.cardVariety}>{p.variedad}</p>}
+                          {p.ubicacion && <p style={styles.cardMeta}><MapPin size={12} /> {p.ubicacion}</p>}
+
+                          {risk && (
+                            <div style={styles.riskBox}>
+                              <div style={{ fontSize: 11.5, fontWeight: 600, color: "#8A3B1D" }}>{risk.riesgo}</div>
+                              <div style={{ fontSize: 11.5, color: "#5C4A2E", marginTop: 2 }}>{risk.sugerencia}</div>
+                            </div>
+                          )}
+
+                          <div style={styles.cardSubstrateLabel}>Sustrato</div>
+                          <StrataBar estratos={info.estratos} colorBase={info.color} height={6} />
+                          <p style={styles.cardText}>{p.sustrato}</p>
+
+                          {p.cuidados && <p style={styles.cardRow}><Droplet size={12} color="#6B4F2A" /> {p.cuidados}</p>}
+                          {p.climaPreferido && <p style={styles.cardRow}><Sun size={12} color="#6B4F2A" /> {p.climaPreferido}</p>}
+                          {p.adaptacion && <p style={styles.cardRow}><Compass size={12} color="#6B4F2A" /> {p.adaptacion}</p>}
+                          {p.notas && <p style={styles.cardNotes}>{p.notas}</p>}
+
+                          {ult && (
+                            <p style={styles.cardRow}><Clock size={12} color="#6B4F2A" /> {eventInfo(ult.tipo).label} · {fmtFecha(ult.fecha)}</p>
+                          )}
+                        </div>
+                        <div style={styles.cardActions}>
+                          <button style={styles.iconBtn} className="icon-btn" onClick={() => setLogPlantId(p.id)}><ClipboardList size={14} /></button>
+                          <button style={styles.iconBtn} className="icon-btn" onClick={() => openEdit(p)}><Pencil size={14} /></button>
+                          <button style={styles.iconBtn} className="icon-btn" onClick={() => handleDelete(p.id)}><Trash2 size={14} /></button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          );
+        })}
+      </div>
+
+      {/* Form modal */}
+      {formOpen && (
+        <div style={styles.overlay} onClick={closeForm}>
+          <form style={styles.modal} onClick={(e) => e.stopPropagation()} onSubmit={handleSave} className="scroll-thin">
+            <div style={styles.modalHeader}>
+              <h2 style={styles.modalTitle}>{form.id ? "Editar planta" : "Nueva planta"}</h2>
+              <button type="button" style={styles.closeBtn} onClick={closeForm}><X size={18} /></button>
+            </div>
+            {form.aiIdentified && (
+              <div style={styles.aiBanner}><Sparkles size={13} /> Identificado con IA — revisa y ajusta antes de guardar.</div>
+            )}
+
+            {form.imagen && (
+              <img src={form.imagen} alt="" style={{ width: "100%", height: 140, objectFit: "cover", borderRadius: 8, marginTop: 10 }} />
+            )}
+
+            <label style={styles.label}>Nombre popular</label>
+            <input style={styles.input} placeholder="Ej. Tuna" value={form.nombre}
+              onChange={(e) => setForm({ ...form, nombre: e.target.value })} required />
+
+            <label style={styles.label}>Nombre científico / variedad</label>
+            <input style={styles.input} placeholder="Ej. Opuntia ficus-indica" value={form.variedad}
+              onChange={(e) => setForm({ ...form, variedad: e.target.value })} />
+
+            <label style={styles.label}>Área / tipo de planta</label>
+            <select style={styles.input} value={form.tipo} onChange={(e) => handleTipoChange(e.target.value)}>
+              {tipos.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+            </select>
+
+            <label style={styles.label}>Sustrato</label>
+            <textarea style={{ ...styles.input, minHeight: 60, resize: "vertical" }} value={form.sustrato}
+              onChange={(e) => setForm({ ...form, sustrato: e.target.value })} />
+
+            <label style={styles.label}>Cuidados</label>
+            <textarea style={{ ...styles.input, minHeight: 50, resize: "vertical" }} placeholder="Riego, luz, poda…"
+              value={form.cuidados} onChange={(e) => setForm({ ...form, cuidados: e.target.value })} />
+
+            <label style={styles.label}>Clima que prefiere</label>
+            <input style={styles.input} placeholder="Ej. Tropical húmedo" value={form.climaPreferido}
+              onChange={(e) => setForm({ ...form, climaPreferido: e.target.value })} />
+
+            <label style={styles.label}>Cómo adaptarla al clima de Ica</label>
+            <textarea style={{ ...styles.input, minHeight: 50, resize: "vertical" }} placeholder="Si no es nativa de zonas áridas…"
+              value={form.adaptacion} onChange={(e) => setForm({ ...form, adaptacion: e.target.value })} />
+
+            <label style={styles.label}>Fecha de llegada</label>
+            <input type="date" style={styles.input} value={form.fechaLlegada}
+              onChange={(e) => setForm({ ...form, fechaLlegada: e.target.value })} />
+
+            <label style={styles.label}>¿En qué situación llegó?</label>
+            <textarea style={{ ...styles.input, minHeight: 45, resize: "vertical" }} placeholder="Ej. llegó con hojas amarillas y raíz débil…"
+              value={form.situacionLlegada} onChange={(e) => setForm({ ...form, situacionLlegada: e.target.value })} />
+
+            <label style={styles.label}>Ubicación (opcional)</label>
+            <input style={styles.input} placeholder="Ej. Patio, maceta grande" value={form.ubicacion}
+              onChange={(e) => setForm({ ...form, ubicacion: e.target.value })} />
+
+            <label style={styles.label}>URL de imagen (opcional, reemplaza la foto)</label>
+            <input style={styles.input} placeholder="https://…" value={form.imagen && form.imagen.startsWith("data:") ? "" : form.imagen}
+              onChange={(e) => setForm({ ...form, imagen: e.target.value })} />
+
+            <label style={styles.label}>Notas (opcional)</label>
+            <textarea style={{ ...styles.input, minHeight: 50, resize: "vertical" }} placeholder="Cualquier otro detalle…"
+              value={form.notas} onChange={(e) => setForm({ ...form, notas: e.target.value })} />
+
+            <div style={styles.modalActions}>
+              <button type="button" style={styles.cancelBtn} onClick={closeForm}>Cancelar</button>
+              <button type="submit" style={styles.saveBtn}>{form.id ? "Guardar cambios" : "Agregar planta"}</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {logPlant && (
+        <LogModal plant={logPlant} onClose={() => setLogPlantId(null)} onAdd={addEvento} onDelete={deleteEvento} />
+      )}
+    </div>
+  );
+}
+
+const styles = {
+  page: { minHeight: "100vh", background: "#F1E9D2", color: "#211C14", fontFamily: "'Work Sans', sans-serif", padding: "28px 20px 60px" },
+  header: { maxWidth: 980, margin: "0 auto 24px" },
+  headerTop: { display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 16 },
+  eyebrow: { display: "flex", alignItems: "center", gap: 6, fontFamily: "'Space Mono', monospace", fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: "#A85C32", marginBottom: 8 },
+  h1: { fontFamily: "'Fraunces', serif", fontWeight: 600, fontSize: "clamp(36px, 6vw, 56px)", margin: 0, lineHeight: 1 },
+  sub: { marginTop: 10, maxWidth: 480, color: "#5C4A2E", fontSize: 14.5, lineHeight: 1.5 },
+  statBox: { display: "flex", flexDirection: "column", alignItems: "flex-end", borderLeft: "2px solid #211C14", paddingLeft: 14 },
+  statNum: { fontFamily: "'Fraunces', serif", fontSize: 40, fontWeight: 600, lineHeight: 1 },
+  statLabel: { fontFamily: "'Space Mono', monospace", fontSize: 11, color: "#6B4F2A", textTransform: "uppercase", letterSpacing: "0.05em" },
+  soilProfile: { marginTop: 26, background: "#E8DFC8", border: "1px solid #D8C9A0", borderRadius: 10, padding: "16px 18px" },
+  soilProfileLabel: { display: "flex", alignItems: "center", gap: 6, fontFamily: "'Space Mono', monospace", fontSize: 11, color: "#6B4F2A", textTransform: "uppercase", letterSpacing: "0.04em" },
+  soilRows: { display: "flex", flexDirection: "column", gap: 8, marginTop: 12 },
+  soilRow: { display: "grid", gridTemplateColumns: "150px 1fr", alignItems: "center", gap: 12 },
+  soilRowLabel: { fontSize: 12.5, color: "#3C3120" },
+  climatePanel: { marginTop: 14, background: "#fff", border: "1px solid #D8C9A0", borderRadius: 10, padding: "16px 18px" },
+  climateHeaderRow: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 },
+  refreshBtn: { display: "flex", alignItems: "center", gap: 6, background: "#211C14", color: "#F1E9D2", border: "none", borderRadius: 20, padding: "6px 12px", fontSize: 12, fontWeight: 600 },
+  climateEmpty: { fontSize: 12.5, color: "#6B4F2A", marginTop: 10, marginBottom: 0 },
+  climateError: { fontSize: 12.5, color: "#8A3B1D", marginTop: 10, marginBottom: 0 },
+  climateSummaryRow: { display: "flex", alignItems: "flex-start", gap: 10, marginTop: 10 },
+  seasonBadge: { fontFamily: "'Space Mono', monospace", fontSize: 10.5, textTransform: "uppercase", background: "#E8DFC8", color: "#3C3120", padding: "4px 9px", borderRadius: 20, flexShrink: 0 },
+  climateSummaryText: { fontSize: 13, color: "#3C3120", margin: 0, lineHeight: 1.45 },
+  climateAlertGeneral: { display: "flex", alignItems: "center", gap: 6, background: "#F3D8C8", color: "#8A3B1D", fontSize: 12.5, padding: "8px 10px", borderRadius: 6, marginTop: 10 },
+  riskList: { display: "flex", flexDirection: "column", gap: 8, marginTop: 12 },
+  riskItem: { background: "#F8F1E0", border: "1px solid #E4DAC0", borderRadius: 8, padding: "8px 10px" },
+  climateChecked: { fontSize: 10.5, color: "#8A7857", marginTop: 12, marginBottom: 0 },
+  toolbar: { maxWidth: 980, margin: "0 auto 20px", display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" },
+  searchWrap: { display: "flex", alignItems: "center", gap: 8, background: "#fff", border: "1px solid #D8C9A0", borderRadius: 8, padding: "9px 12px", flex: "1 1 220px" },
+  searchInput: { border: "none", outline: "none", fontSize: 14, flex: 1, background: "transparent", color: "#211C14" },
+  select: { border: "1px solid #D8C9A0", borderRadius: 8, padding: "9px 12px", fontSize: 14, background: "#fff", color: "#211C14" },
+  addBtn: { display: "flex", alignItems: "center", gap: 6, background: "#2F5233", color: "#F1E9D2", border: "none", borderRadius: 8, padding: "10px 16px", fontSize: 14, fontWeight: 600 },
+  addBtnGhostSmall: { display: "flex", alignItems: "center", gap: 6, background: "transparent", color: "#211C14", border: "1px solid #D8C9A0", borderRadius: 8, padding: "10px 14px", fontSize: 14, fontWeight: 600 },
+  addBtnGhost: { display: "flex", alignItems: "center", gap: 6, background: "#211C14", color: "#F1E9D2", border: "none", borderRadius: 8, padding: "10px 16px", fontSize: 14, fontWeight: 600 },
+  errorBanner: { maxWidth: 980, margin: "0 auto 16px", background: "#F3D8C8", color: "#6B2E12", padding: "10px 14px", borderRadius: 8, fontSize: 13.5 },
+  empty: { maxWidth: 980, margin: "40px auto", textAlign: "center", padding: "40px 20px", border: "1px dashed #D8C9A0", borderRadius: 12 },
+  emptyTitle: { fontFamily: "'Fraunces', serif", fontSize: 20, fontWeight: 600, margin: "12px 0 4px" },
+  emptyText: { fontSize: 13.5, color: "#6B4F2A", margin: 0 },
+  areas: { maxWidth: 980, margin: "0 auto", display: "flex", flexDirection: "column", gap: 30 },
+  area: {},
+  areaHeader: { display: "flex", alignItems: "center", gap: 10, marginBottom: 12 },
+  areaDot: { width: 10, height: 10, borderRadius: "50%", flexShrink: 0 },
+  areaTitle: { fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 600, margin: 0 },
+  areaCount: { fontFamily: "'Space Mono', monospace", fontSize: 12, color: "#8A7857" },
+  areaEmpty: { fontSize: 13, color: "#8A7857", fontStyle: "italic", margin: 0 },
+  grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 18 },
+  card: { background: "#fff", border: "1px solid #E4DAC0", borderRadius: 12, overflow: "hidden", display: "flex", flexDirection: "column", position: "relative" },
+  cardAtRisk: { border: "1px solid #C97B4A", boxShadow: "0 0 0 1px #C97B4A22" },
+  cardImageWrap: { position: "relative", height: 130 },
+  cardImage: { width: "100%", height: "100%", objectFit: "cover", display: "block" },
+  cardImagePlaceholder: { width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" },
+  aiTag: { position: "absolute", top: 10, right: 10, display: "flex", alignItems: "center", gap: 4, background: "#211C14", color: "#F1E9D2", fontSize: 10, fontWeight: 600, padding: "4px 8px", borderRadius: 20, fontFamily: "'Space Mono', monospace" },
+  riskTag: { position: "absolute", top: 10, left: 10, display: "flex", alignItems: "center", gap: 4, background: "#8A3B1D", color: "#F8ECE0", fontSize: 10, fontWeight: 600, padding: "4px 8px", borderRadius: 20, fontFamily: "'Space Mono', monospace" },
+  riskBox: { background: "#F8ECE0", border: "1px solid #E7C4A5", borderRadius: 6, padding: "7px 9px", margin: "6px 0 10px" },
+  cardBody: { padding: "14px 16px 6px", flex: 1 },
+  cardName: { fontFamily: "'Fraunces', serif", fontSize: 19, fontWeight: 600, margin: 0 },
+  cardVariety: { fontStyle: "italic", fontSize: 12.5, color: "#6B4F2A", margin: "2px 0 8px" },
+  cardMeta: { display: "flex", alignItems: "center", gap: 4, fontSize: 11.5, color: "#8A7857", margin: "0 0 10px" },
+  cardSubstrateLabel: { fontFamily: "'Space Mono', monospace", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", color: "#8A7857", marginBottom: 4 },
+  cardText: { fontSize: 12, lineHeight: 1.45, color: "#3C3120", marginTop: 8 },
+  cardRow: { display: "flex", alignItems: "flex-start", gap: 6, fontSize: 11.5, lineHeight: 1.4, color: "#3C3120", marginTop: 6 },
+  cardNotes: { fontSize: 11.5, color: "#8A7857", borderTop: "1px dashed #E4DAC0", paddingTop: 8, marginTop: 8 },
+  cardActions: { display: "flex", borderTop: "1px solid #EFE8D4" },
+  iconBtn: { flex: 1, background: "transparent", border: "none", padding: "9px 0", display: "flex", alignItems: "center", justifyContent: "center", color: "#6B4F2A" },
+  overlay: { position: "fixed", inset: 0, background: "rgba(33,28,20,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, zIndex: 50 },
+  modal: { background: "#F1E9D2", borderRadius: 14, padding: 22, width: "100%", maxWidth: 420, maxHeight: "88vh", overflowY: "auto", display: "flex", flexDirection: "column" },
+  modalHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 },
+  modalTitle: { fontFamily: "'Fraunces', serif", fontSize: 20, fontWeight: 600, margin: 0 },
+  closeBtn: { background: "transparent", border: "none", color: "#211C14" },
+  aiBanner: { display: "flex", alignItems: "center", gap: 6, background: "#E8DFC8", color: "#3C3120", fontSize: 12, padding: "7px 10px", borderRadius: 6, marginTop: 6 },
+  arrivalBox: { display: "flex", gap: 8, background: "#E8DFC8", borderRadius: 8, padding: "9px 11px", marginTop: 10 },
+  label: { fontFamily: "'Space Mono', monospace", fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.05em", color: "#6B4F2A", marginTop: 12, marginBottom: 5 },
+  input: { width: "100%", border: "1px solid #D8C9A0", borderRadius: 8, padding: "9px 11px", fontSize: 13.5, background: "#fff", color: "#211C14", outline: "none" },
+  modalActions: { display: "flex", gap: 10, marginTop: 20 },
+  cancelBtn: { flex: 1, background: "transparent", border: "1px solid #D8C9A0", borderRadius: 8, padding: "10px 0", fontSize: 13.5, color: "#211C14" },
+  saveBtn: { flex: 1, background: "#2F5233", border: "none", borderRadius: 8, padding: "10px 0", fontSize: 13.5, fontWeight: 600, color: "#F1E9D2" },
+  logForm: { marginTop: 14, borderTop: "1px solid #E4DAC0", paddingTop: 14 },
+  logList: { display: "flex", flexDirection: "column", gap: 8, marginTop: 16 },
+  logItem: { display: "flex", gap: 8, background: "#fff", border: "1px solid #E4DAC0", borderRadius: 8, padding: "8px 10px", alignItems: "flex-start" },
+  logDelete: { background: "transparent", border: "none", color: "#8A7857", padding: 4 },
+};
