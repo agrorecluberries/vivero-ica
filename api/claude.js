@@ -1,5 +1,8 @@
+import { isAuthorized } from "./_auth.js";
+
 export default async function handler(req, res) {
   if (req.method !== "POST") { res.status(405).json({ error: "Método no permitido" }); return; }
+  if (!isAuthorized(req)) { res.status(401).json({ error: "No autorizado" }); return; }
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) { res.status(500).json({ error: "Falta ANTHROPIC_API_KEY" }); return; }
   try {
