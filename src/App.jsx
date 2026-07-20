@@ -55,6 +55,84 @@ const BASE_TIPOS = [
 const BASE_IDS = BASE_TIPOS.map((t) => t.id);
 const EXTRA_COLORS = ["#7A5C3E", "#4A6B5C", "#8B5E83", "#5C6B8A", "#9B7653", "#3E6B5A", "#8A5C6B"];
 
+const CARE_INFO = {
+    cactus: {
+          cuidados: "Riego escaso y espaciado (cada 2-3 semanas en verano, menos en invierno), dejando secar el sustrato por completo entre riegos. Ubicar a pleno sol. Podar solo para retirar partes danadas.",
+          climaPreferido: "Zonas aridas y semiaridas, con suelos bien drenados y alta exposicion solar.",
+          adaptacion: "Ya esta naturalmente adaptada al clima seco de Ica; evita el exceso de riego y la humedad estancada, el principal riesgo para este tipo de plantas.",
+    },
+    tropical: {
+          cuidados: "Riego frecuente para mantener el sustrato ligeramente humedo, sin encharcar. Luz indirecta brillante. Aumentar la humedad ambiental con nebulizaciones o bandejas con agua.",
+          climaPreferido: "Climas calidos y humedos, con lluvias frecuentes y poca variacion de temperatura.",
+          adaptacion: "En Ica, ubicar en zonas con sombra parcial y nebulizar las hojas regularmente para compensar la baja humedad ambiental tipica del desierto costero.",
+    },
+    frutal: {
+          cuidados: "Riego profundo y regular, especialmente en floracion y fructificacion. Podas de formacion y sanitarias cada temporada. Fertilizar con compost o abono organico periodicamente.",
+          climaPreferido: "Varia segun la especie; muchos frutales prefieren clima templado con estacion fria marcada para inducir la floracion.",
+          adaptacion: "Usar mulch grueso para conservar la humedad del suelo y regar con mayor frecuencia durante el calor extremo de Ica; considerar sombra parcial en las horas de mas sol si la especie no tolera bien el calor seco.",
+    },
+    aromatica: {
+          cuidados: "Riego moderado y frecuente, evitando encharcar. Pleno sol o semisombra segun la especie. Cosechar o podar las hojas regularmente para estimular brotes nuevos.",
+          climaPreferido: "La mayoria son de origen mediterraneo, adaptadas a climas templados y secos con buena exposicion solar.",
+          adaptacion: "Se adaptan bien al clima arido de Ica; conviene regar en las horas mas frescas del dia para evitar el estres hidrico por el calor.",
+    },
+    ornamental: {
+          cuidados: "Riego moderado, dejando secar la superficie del sustrato entre riegos. Luz indirecta, evitando el sol directo intenso. Limpiar las hojas periodicamente para favorecer la fotosintesis.",
+          climaPreferido: "Ambientes interiores estables, con temperatura templada y humedad moderada.",
+          adaptacion: "Protegerla del sol directo y del aire muy seco tipico de Ica; ubicarla lejos de corrientes de aire caliente y considerar aumentar la humedad ambiental a su alrededor.",
+    },
+    otra: {
+          cuidados: "Revisa las necesidades especificas de riego, luz y poda segun la especie identificada.",
+          climaPreferido: "Variable segun la especie.",
+          adaptacion: "Ajusta el cuidado observando como responde la planta al clima arido y seco de Ica.",
+    },
+};
+
+const FAMILY_TO_CATEGORY = {
+    Cactaceae: "cactus",
+    Agavaceae: "cactus",
+    Asparagaceae: "cactus",
+    Crassulaceae: "cactus",
+    Aizoaceae: "cactus",
+    Didiereaceae: "cactus",
+    Araceae: "tropical",
+    Marantaceae: "tropical",
+    Musaceae: "tropical",
+    Zingiberaceae: "tropical",
+    Bromeliaceae: "tropical",
+    Orchidaceae: "tropical",
+    Heliconiaceae: "tropical",
+    Strelitziaceae: "tropical",
+    Arecaceae: "tropical",
+    Rutaceae: "frutal",
+    Rosaceae: "frutal",
+    Anacardiaceae: "frutal",
+    Myrtaceae: "frutal",
+    Vitaceae: "frutal",
+    Sapindaceae: "frutal",
+    Caricaceae: "frutal",
+    Passifloraceae: "frutal",
+    Solanaceae: "frutal",
+    Lamiaceae: "aromatica",
+    Apiaceae: "aromatica",
+    Verbenaceae: "aromatica",
+    Araliaceae: "ornamental",
+    Moraceae: "ornamental",
+    Begoniaceae: "ornamental",
+    Liliaceae: "ornamental",
+    Amaryllidaceae: "ornamental",
+    Iridaceae: "ornamental",
+    Rubiaceae: "ornamental",
+    Malvaceae: "ornamental",
+    Apocynaceae: "ornamental",
+    Piperaceae: "ornamental",
+    Asteraceae: "ornamental",
+};
+
+function categoryFromFamily(family) {
+    return FAMILY_TO_CATEGORY[family] || "otra";
+}
+
 const EVENT_TYPES = [
   { id: "llegada", label: "Llegada", icon: Home },
   { id: "plaga", label: "Plaga", icon: Bug },
@@ -380,7 +458,9 @@ function PlantInventory({ onLogout }) {
                       const data = await response.json();
                       if (!response.ok || !data.scientificName) throw new Error("sin identificacion");
 
-                      const info = tipoInfo(tipos, "otra");
+    const categoryId = categoryFromFamily(data.family);
+                      const info = tipoInfo(tipos, categoryId);
+                      const care = CARE_INFO[categoryId] || CARE_INFO.otra;
                       const nombreComun = (data.commonNames && data.commonNames[0]) || data.scientificName;
 
                       setForm({
@@ -389,6 +469,9 @@ function PlantInventory({ onLogout }) {
                                   variedad: data.scientificName || "",
                                   tipo: info.id,
                                   sustrato: info.sustrato,
+                                  cuidados: care.cuidados,
+                                  climaPreferido: care.climaPreferido,
+                                  adaptacion: care.adaptacion,
                                   imagen: compressed,
                                   aiIdentified: true,
                       });
