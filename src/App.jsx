@@ -359,94 +359,46 @@ function PlantInventory({ onLogout }) {
     fileInputRef.current?.click();
   };
 
-  const handleImageSelected = async (e) => {
-    const file = e.target.files && e.target.files[0];
-    e.target.value = "";
-    if (!file) return;
-    setIdentifyError("");
-    setIdentifying(true);
-    try {
-      const compressed = await fileToCompressedDataUrl(file, 640, 0.72);
-      const match = compressed.match(/^data:(.*);base64,(.*)$/);
-      if (!match) throw new Error("bad image");
-      const mediaType = match[1];
-      const b64 = match[2];
+    const handleImageSelected = async (e) => {
+            const file = e.target.files && e.target.files[0];
+            e.target.value = "";
+            if (!file) return;
+            setIdentifyError("");
+            setIdentifying(true);
+            try {
+                      const compressed = await fileToCompressedDataUrl(file, 640, 0.72);
+                      const match = compressed.match(/^data:(.*);base64,(.*)$/);
+                      if (!match) throw new Error("bad image");
+                      const mediaType = match[1];
+                      const b64 = match[2];
 
-      const prompt = `Eres un experto en botánica y jardinería en climas áridos como el de Ica, Perú (calor seco, baja humedad, suelo arenoso, lluvias muy escasas).
-Analiza la imagen de esta planta y responde SOLO con un objeto JSON válido, sin backticks ni texto adicional, con exactamente estas claves:
-{
-"nombre_comun": "nombre popular de la planta",
-"nombre_cientifico": "nombre científico o variedad, si lo sabes",
-"categoria_id": "slug corto en minúsculas y sin acentos para agrupar este tipo de planta, ej: cactus, tropical, palmera, trepadora",
-"categoria_label": "nombre de la categoría en español, ej: 'Palmeras', 'Trepadoras'",
-"sustrato": "mezcla de sustrato recomendada específicamente para esta planta, adaptada al clima árido de Ica (máx. 2 frases)",
-"cuidados": "cuidados clave: riego, luz, poda (máx. 2 frases)",
-"clima_preferido": "clima natural u original de esta especie (máx. 1-2 frases)",
-"adaptacion_ica": "qué hacer para adaptarla al clima árido de Ica si no es nativa de zonas secas; si ya es apta, dilo brevemente (máx. 2 frases)"
-}
-Si no identificas la especie con certeza, da tu mejor estimación razonable y dilo brevemente dentro de "cuidados".`;
+                      const response = await fetch("/api/identify", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ mediaType, b64 }),
+                      });
+                      const data = await response.json();
+                      if (!response.ok || !data.scientificName) throw new Error("sin identificacion");
 
-      const response = await fetch("/api/claude", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-6",
-          max_tokens: 1000,
-          messages: [
-            {
-              role: "user",
-              content: [
-                { type: "image", source: { type: "base64", media_type: mediaType, data: b64 } },
-                { type: "text", text: prompt },
-              ],
-            },
-          ],
-        }),
-      });
-      const data = await response.json();
-      const text = (data.content || []).map((b) => b.text || "").join("\n");
-      const cleanText = text.replace(/```json|```/g, "").trim();
-      const result = JSON.parse(cleanText);
+                      const info = tipoInfo(tipos, "otra");
+                      const nombreComun = (data.commonNames && data.commonNames[0]) || data.scientificName;
 
-      const catIdRaw = slugify(result.categoria_id || result.categoria_label || "otra");
-      const existingMatch = tipos.find(
-        (t) => t.id === catIdRaw || slugify(t.label) === slugify(result.categoria_label || "")
-      );
-
-      let tipoId;
-      if (existingMatch) {
-        tipoId = existingMatch.id;
-      } else {
-        const newTipo = {
-          id: catIdRaw || "cat-" + Date.now(),
-          label: result.categoria_label || "Nueva área",
-          color: pickColor(tipos),
-          sustrato: result.sustrato || "",
-          estratos: [50, 30, 20],
-        };
-        await persistTipos([...tipos, newTipo]);
-        tipoId = newTipo.id;
-      }
-
-      setForm({
-        ...emptyForm,
-        nombre: result.nombre_comun || "",
-        variedad: result.nombre_cientifico || "",
-        tipo: tipoId,
-        sustrato: result.sustrato || "",
-        cuidados: result.cuidados || "",
-        climaPreferido: result.clima_preferido || "",
-        adaptacion: result.adaptacion_ica || "",
-        imagen: compressed,
-        aiIdentified: true,
-      });
-      setFormOpen(true);
-    } catch (err) {
-      setIdentifyError("No se pudo identificar la planta automáticamente. Puedes completarla a mano.");
-    } finally {
-      setIdentifying(false);
-    }
-  };
+                      setForm({
+                                  ...emptyForm,
+                                  nombre: nombreComun,
+                                  variedad: data.scientificName || "",
+                                  tipo: info.id,
+                                  sustrato: info.sustrato,
+                                  imagen: compressed,
+                                  aiIdentified: true,
+                      });
+                      setFormOpen(true);
+            } catch (err) {
+                      setIdentifyError("No se pudo identificar la planta automaticamente. Puedes completarla a mano.");
+            } finally {
+                      setIdentifying(false);
+            }
+    };
 
   const checkClimate = async () => {
     if (plants.length === 0) {
