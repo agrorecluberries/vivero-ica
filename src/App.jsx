@@ -327,7 +327,7 @@ function PlantInventory({ onLogout }) {
     setTimeout(() => setSuccessMsg(""), 3000);
   };
 
-  const handleDelete = (id) => {
+  const handleDelete = (id) => { if (!window.confirm("Eliminar esta planta del inventario. Esta accion no se puede deshacer.")) return;
     persistPlants(plants.filter((p) => p.id !== id));
     setSuccessMsg("Planta eliminada.");
     setTimeout(() => setSuccessMsg(""), 3000);
@@ -707,7 +707,7 @@ Si ninguna planta corre riesgo hoy, usa "plantas_en_riesgo": [].`;
 
       {/* Áreas */}
       <div style={styles.areas}>
-        {loaded && plants.length > 0 && visibleTipos.map((t) => {
+        {loaded && filtered.length > 0 && visibleTipos.map((t) => {
           const tipoPlants = filtered.filter((p) => p.tipo === t.id);
           if (filterTipo === "todos" && tipoPlants.length === 0 && !BASE_IDS.includes(t.id)) return null;
           return (
